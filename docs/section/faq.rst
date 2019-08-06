@@ -52,14 +52,14 @@ calling the server. Example:
 .. highlight:: bash
 .. code:: bash
 
-   bert_serving_start -pooling_layer -4 -3 -2 -1 -model_dir /tmp/english_L-12_H-768_A-12/
+   bert-serving-start -pooling_layer -4 -3 -2 -1 -model_dir /tmp/english_L-12_H-768_A-12/
 
 What are the available pooling strategies?
 '''''''''''''''''''''''''''''''''''''''''''''''''
 
 Here is a table summarizes all pooling strategies I implemented.
 Choose your favorite one by specifying
-``bert_serving_start -pooling_strategy``.
+``bert-serving-start -pooling_strategy``.
 
 ================================ ========================================================================================================================================================================
 Strategy                         Description
@@ -139,7 +139,7 @@ enough time).
 How many requests can one service handle concurrently?
 '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
 The maximum number of concurrent requests is determined by
-``num_worker`` in ``bert_serving_start``. If you a sending more than
+``num_worker`` in ``bert-serving-start``. If you a sending more than
 ``num_worker`` requests concurrently, the new requests will be
 temporally stored in a queue until a free worker becomes available.
 
@@ -166,7 +166,7 @@ Did you benchmark the efficiency?
 
 Yes. See `Benchmark`_.
 
-To reproduce the results, please `run ``python benchmark.py```_.
+To reproduce the results, please `run ``bert-serving-benchmark --help```_.
 
 What is backend based on?
 ''''''''''''''''''''''''''''''''
@@ -411,7 +411,7 @@ again GPU0, respectively. In general, if ``num_worker`` >
 Note, ``device_map`` is ignored when running on CPU.
 
 .. _Benchmark: #zap-benchmark
-.. _run ``python benchmark.py``: benchmark.py
+.. _run ``bert-serving-benchmark --help``: benchmark.py
 .. _ZeroMQ: http://zeromq.org/
 
 .. _UCI-News Aggregator Dataset: https://www.kaggle.com/uciml/news-aggregator-dataset

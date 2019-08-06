@@ -70,7 +70,7 @@
 - :octopus: **Scalable**: scale nicely and smoothly on multiple GPUs and multiple clients without worrying about concurrency. See [benchmark](#speed-wrt-num_client).
 - :gem: **Reliable**: tested on multi-billion sentences; days of running without a break or OOM or any nasty exceptions.
 
-More features: asynchronous encoding; multicasting; mix GPU & CPU workloads; graph optimization; `tf.data` friendly; customized tokenizer; pooling strategy and layer; XLA support etc.
+More features: [XLA & FP16 support](#speed-wrt--fp16-and--xla); mix GPU-CPU workloads; optimized graph; `tf.data` friendly; customized tokenizer; flexible pooling strategy; [build-in HTTP server](#using-bert-as-service-to-serve-http-requests-in-json) and dashboard; [async encoding](#asynchronous-encoding); [multicasting](#broadcasting-to-multiple-clients); etc.
 
 
 <h2 align="center">Install</h2>
@@ -158,7 +158,7 @@ bc = BertClient(ip='xx.xx.xx.xx')  # ip address of the GPU machine
 bc.encode(['First do it', 'then do it right', 'then do it better'])
 ```
 
-Note that you only need `pip install -U bert-serving-client` in this case, the server side is not required.
+Note that you only need `pip install -U bert-serving-client` in this case, the server side is not required. You may also [call the service via HTTP requests.](#using-bert-as-service-to-serve-http-requests-in-json)
 
 > :bulb: **Want to learn more? Checkout our tutorials:**
 > - [Building a QA semantic search engine in 3 min.](#building-a-qa-semantic-search-engine-in-3-minutes)
@@ -171,6 +171,8 @@ Note that you only need `pip install -U bert-serving-client` in this case, the s
 > - [Asynchronous encoding](#asynchronous-encoding)
 > - [Broadcasting to multiple clients](#broadcasting-to-multiple-clients)
 > - [Monitoring the service status in a dashboard](#monitoring-the-service-status-in-a-dashboard)
+> - [Using `bert-as-service` to serve HTTP requests in JSON](#using-bert-as-service-to-serve-http-requests-in-json)
+> - [Starting `BertServer` from Python](#starting-bertserver-from-python)
 
 
 <h2 align="center">Server and Client API</h2>
@@ -178,13 +180,15 @@ Note that you only need `pip install -U bert-serving-client` in this case, the s
 
 [![ReadTheDoc](https://readthedocs.org/projects/bert-as-service/badge/?version=latest&style=for-the-badge)](http://bert-as-service.readthedocs.io)
 
-The best way to learn `bert-as-service` API is [reading the documentation](http://bert-as-service.readthedocs.io).
+The best way to learn `bert-as-service` **latest API** is [reading the documentation](http://bert-as-service.readthedocs.io).
 
 ### Server API
 
-Server-side is a CLI `bert-serving-start`, you can get the latest usage via:
+[Please always refer to the latest server-side API documented here.](https://bert-as-service.readthedocs.io/en/latest/source/server.html#server-side-api), you may get the latest usage via:
 ```bash
 bert-serving-start --help
+bert-serving-terminate --help
+bert-serving-benchmark --help
 ```
 
 | Argument | Type | Default | Description |
@@ -192,26 +196,30 @@ bert-serving-start --help
 | `model_dir` | str | *Required* | folder path of the pre-trained BERT model. |
 | `tuned_model_dir`| str |(Optional)| folder path of a fine-tuned BERT model. |
 | `ckpt_name`| str | `bert_model.ckpt` | filename of the checkpoint file. |
-| `config_name`| str | `bert_config.json` | filename of the JSON config file for BERT model. | 
-| `max_seq_len` | int | `25` | maximum length of sequence, longer sequence will be trimmed on the right side. |
+| `config_name`| str | `bert_config.json` | filename of the JSON config file for BERT model. |
+| `graph_tmp_dir` | str | None | path to graph temp file |  
+| `max_seq_len` | int | `25` | maximum length of sequence, longer sequence will be trimmed on the right side. Set it to NONE for dynamically using the longest sequence in a (mini)batch. |
+| `cased_tokenization` | bool | False | Whether tokenizer should skip the default lowercasing and accent removal. Should be used for e.g. the multilingual cased pretrained BERT model. |
 | `mask_cls_sep` | bool | False | masking the embedding on [CLS] and [SEP] with zero. |
 | `num_worker` | int | `1` | number of (GPU/CPU) worker runs BERT model, each works in a separate process. |
 | `max_batch_size` | int | `256` | maximum number of sequences handled by each worker, larger batch will be partitioned into small batches. |
 | `priority_batch_size` | int | `16` | batch smaller than this size will be labeled as high priority, and jumps forward in the job queue to get result faster |
 | `port` | int | `5555` | port for pushing data from client to server |
 | `port_out` | int | `5556`| port for publishing results from server to client |
+| `http_port` | int | None | server port for receiving HTTP requests |
+| `cors` | str | `*` | setting "Access-Control-Allow-Origin" for HTTP requests |
 | `pooling_strategy` | str | `REDUCE_MEAN` | the pooling strategy for generating encoding vectors, valid values are `NONE`, `REDUCE_MEAN`, `REDUCE_MAX`, `REDUCE_MEAN_MAX`, `CLS_TOKEN`, `FIRST_TOKEN`, `SEP_TOKEN`, `LAST_TOKEN`. Explanation of these strategies [can be found here](#q-what-are-the-available-pooling-strategies). To get encoding for each token in the sequence, please set this to `NONE`.|
 | `pooling_layer` | list | `[-2]` | the encoding layer that pooling operates on, where `-1` means the last layer, `-2` means the second-to-last, `[-1, -2]` means concatenating the result of last two layers, etc.|
 | `gpu_memory_fraction` | float | `0.5` | the fraction of the overall amount of memory that each GPU should be allocated per worker |
 | `cpu` | bool | False | run on CPU instead of GPU |
 | `xla` | bool | False | enable [XLA compiler](https://www.tensorflow.org/xla/jit) for graph optimization (*experimental!*) |
+| `fp16` | bool | False | use float16 precision (experimental) |
 | `device_map` | list | `[]` | specify the list of GPU device ids that will be used (id starts from 0)|
+| `show_tokens_to_client` | bool | False | sending tokenization results to client | 
 
 ### Client API
 
-Detailed explanation of client API [can be found in the documentation](https://bert-as-service.readthedocs.io/en/add-doc/source/client.html#api-documentation).
-
-Client-side provides a Python class called `BertClient`, which accepts arguments as follows:
+[Please always refer to the latest client-side API documented here.](https://bert-as-service.readthedocs.io/en/latest/source/client.html#module-client) Client-side provides a Python class called `BertClient`, which accepts arguments as follows:
 
 | Argument | Type | Default | Description |
 |----------------------|------|-----------|-------------------------------------------------------------------------------|
@@ -222,7 +230,7 @@ Client-side provides a Python class called `BertClient`, which accepts arguments
 | `show_server_config` | bool | `False` | whether to show server configs when first connected |
 | `check_version` | bool | `True` | whether to force client and server to have the same version |
 | `identity` | str | `None` | a UUID that identifies the client, useful in multi-casting |
-| `timeout` | int | `5000` | set the timeout (milliseconds) for receive operation on the client |
+| `timeout` | int | `-1` | set the timeout (milliseconds) for receive operation on the client |
 
 A `BertClient` implements the following methods and properties:
 
@@ -235,7 +243,6 @@ A `BertClient` implements the following methods and properties:
 |`.close()`|Gracefully close the connection between the client and the server|
 |`.status`|Get the client status in JSON format|
 |`.server_status`|Get the server status in JSON format|
-
 
 
 <h2 align="center">:book: Tutorial</h2>
@@ -258,6 +265,8 @@ The full list of examples can be found in [`example/`](example). You can run eac
 > - [Asynchronous encoding](#asynchronous-encoding)
 > - [Broadcasting to multiple clients](#broadcasting-to-multiple-clients)
 > - [Monitoring the service status in a dashboard](#monitoring-the-service-status-in-a-dashboard)
+> - [Using `bert-as-service` to serve HTTP requests in JSON](#using-bert-as-service-to-serve-http-requests-in-json)
+> - [Starting `BertServer` from Python](#starting-bertserver-from-python)
 
 </details>
 
@@ -290,8 +299,8 @@ Finally, we are ready to receive new query and perform a simple "fuzzy" search a
 while True:
     query = input('your question: ')
     query_vec = bc.encode([query])[0]
-    # compute simple dot product as score
-    score = np.sum(query_vec * doc_vecs, axis=1)
+    # compute normalized dot product as score
+    score = np.sum(query_vec * doc_vecs, axis=1) / np.linalg.norm(doc_vecs, axis=1)
     topk_idx = np.argsort(score)[::-1][:topk]
     for idx in topk_idx:
         print('> %s\t%s' % (score[idx], questions[idx]))
@@ -386,7 +395,53 @@ This gives `[2, 25, 768]` tensor where the first `[1, 25, 768]` corresponds to t
 
 Note that there is no need to start a separate server for handling tokenized/untokenized sentences. The server can tell and handle both cases automatically.
 
-Beware that the pretrained BERT Chinese from Google is character-based, i.e. its vocabulary is made of single Chinese characters. Therefore it makes no sense if you use word-level segmentation algorithm to pre-process the data and feed to such model.
+Sometimes you want to know explicitly the tokenization performed on the server side to have better understanding of the embedding result. One such case is asking word embedding from the server (with `-pooling_strategy NONE`), one wants to tell which word is tokenized and which is unrecognized. You can get such information with the following steps:
+ 
+ 1. enabling `-show_tokens_to_client` on the server side;
+ 2. calling the server via `encode(..., show_tokens=True)`.
+ 
+For example, a basic usage like
+
+```python
+bc.encode(['hello world!', 'thisis it'], show_tokens=True)
+```
+returns a tuple, where the first element is the embedding and the second is the tokenization result from the server:
+
+```text
+(array([[[ 0.        , -0.        ,  0.        , ...,  0.        , -0.        , -0.        ],
+        [ 1.1100919 , -0.20474958,  0.9895898 , ...,  0.3873255  , -1.4093989 , -0.47620595],
+        ..., -0.        , -0.        ]],
+
+       [[ 0.        , -0.        ,  0.        , ...,  0.        , 0.        ,  0.        ],
+        [ 0.6293478 , -0.4088499 ,  0.6022662 , ...,  0.41740108, 1.214456  ,  1.2532915 ],
+        ..., 0.        ,  0.        ]]], dtype=float32),
+         
+          [['[CLS]', 'hello', 'world', '!', '[SEP]'], ['[CLS]', 'this', '##is', 'it', '[SEP]']])
+```
+
+When using your own tokenization, you may still want to check if the server respects your tokens. For example,  
+```python
+bc.encode([['hello', 'world!'], ['thisis', 'it']], show_tokens=True, is_tokenized=True)
+```
+returns:
+
+```text
+(array([[[ 0.        , -0.        ,  0.        , ...,  0.       ,  -0.        ,  0.        ],
+        [ 1.1111546 , -0.56572634,  0.37183186, ...,  0.02397121,  -0.5445367 ,  1.1009651 ],
+        ..., -0.        ,  0.        ]],
+
+       [[ 0.        ,  0.        ,  0.        , ...,  0.        ,  -0.        ,  0.        ],
+        [ 0.39262453,  0.3782491 ,  0.27096173, ...,  0.7122045 ,  -0.9874849 ,  0.9318679 ],
+        ..., -0.        ,  0.        ]]], dtype=float32),
+         
+         [['[CLS]', 'hello', '[UNK]', '[SEP]'], ['[CLS]', '[UNK]', 'it', '[SEP]']])
+```
+
+One can observe that `world!` and `thisis` are not recognized on the server, hence they are set to `[UNK]`.
+
+Finally, beware that the pretrained BERT Chinese from Google is character-based, i.e. its vocabulary is made of single Chinese characters. Therefore it makes no sense if you use word-level segmentation algorithm to pre-process the data and feed to such model.
+
+Extremely curious readers may notice that the first row in the above example is all-zero even though the tokenization result includes `[CLS]` (well done, detective!). The reason is that the tokenization result will **always** includes `[CLS]` and `[UNK]` regardless the setting of `-mask_cls_sep`. This could be useful when you want to align the tokens afterwards. Remember, `-mask_cls_sep` only masks `[CLS]` and `[SEP]` out of the computation. It doesn't affect the tokenization algorithm.
 
 
 ### Using `BertClient` with `tf.data` API
@@ -568,9 +623,94 @@ json.dumps(bc.server_status, ensure_ascii=False)
 
 This gives the current status of the server including number of requests, number of clients etc. in JSON format. The only thing remained is to start a HTTP server for returning this JSON to the frontend that renders it.
 
+Alternatively, one may simply expose an HTTP port when starting a server via:
+
+```bash
+bert-serving-start -http_port 8001 -model_dir ...
+```
+
+This will allow one to use javascript or `curl` to fetch the server status at port 8001.
+
 `plugin/dashboard/index.html` shows a simple dashboard based on Bootstrap and Vue.js.
 
 <p align="center"><img src=".github/dashboard.png?raw=true"/></p>
+
+### Using `bert-as-service` to serve HTTP requests in JSON
+
+Besides calling `bert-as-service` from Python, one can also call it via HTTP request in JSON. It is quite useful especially when low transport layer is prohibited. Behind the scene, `bert-as-service` spawns a Flask server in a separate process and then reuse a `BertClient` instance as a proxy to communicate with the ventilator.
+
+To enable the build-in HTTP server, we need to first (re)install the server with some extra Python dependencies:
+```bash
+pip install -U bert-serving-server[http]
+```
+
+Then simply start the server with:
+```bash
+bert-serving-start -model_dir=/YOUR_MODEL -http_port 8125
+```
+
+Done! Your server is now listening HTTP and TCP requests at port `8125` simultaneously!
+
+To send a HTTP request, first prepare the payload in JSON as following:
+```json
+{
+    "id": 123,
+    "texts": ["hello world", "good day!"],
+    "is_tokenized": false
+}
+```
+, where `id` is a unique identifier helping you to synchronize the results; `is_tokenized` follows the meaning in [`BertClient` API](https://bert-as-service.readthedocs.io/en/latest/source/client.html#client.BertClient.encode_async) and `false` by default.
+
+Then simply call the server at `/encode` via HTTP POST request. You can use javascript or whatever, here is an example using `curl`:
+```bash
+curl -X POST http://xx.xx.xx.xx:8125/encode \
+  -H 'content-type: application/json' \
+  -d '{"id": 123,"texts": ["hello world"], "is_tokenized": false}'
+```
+, which returns a JSON:
+```json
+{
+    "id": 123,
+    "results": [[768 float-list], [768 float-list]],
+    "status": 200
+}
+```
+
+To get the server's status and client's status, you can send GET requests at `/status/server` and `/status/client`, respectively.
+
+Finally, one may also config CORS to restrict the public access of the server by specifying `-cors` when starting `bert-serving-start`. By default `-cors=*`, meaning the server is public accessible.
+
+
+### Starting `BertServer` from Python
+
+Besides shell, one can also start a `BertServer` from python. Simply do
+```python
+from bert_serving.server.helper import get_args_parser
+from bert_serving.server import BertServer
+args = get_args_parser().parse_args(['-model_dir', 'YOUR_MODEL_PATH_HERE',
+                                     '-port', '5555',
+                                     '-port_out', '5556',
+                                     '-max_seq_len', 'NONE',
+                                     '-mask_cls_sep',
+                                     '-cpu'])
+server = BertServer(args)
+server.start()
+``` 
+
+Note that it's basically mirroring the arg-parsing behavior in CLI, so everything in that `.parse_args([])` list should be string, e.g. `['-port', '5555']` not `['-port', 5555]`.
+
+To shutdown the server, you may call the static method in `BertServer` class via:
+```python
+BertServer.shutdown(port=5555)
+```
+
+Or via shell CLI:
+```bash
+bert-serving-terminate -port 5555
+```
+
+This will terminate the server running on localhost at port 5555. You may also use it to terminate a remote server, see `bert-serving-terminate --help` for details.
+
 
 <h2 align="center">:speech_balloon: FAQ</h2>
 <p align="right"><a href="#bert-as-service"><sup>▴ Back to top</sup></a></p>
@@ -601,12 +741,12 @@ In general, each sentence is translated to a 768-dimensional vector. Depending o
 **A:** Sure! Just use a list of the layer you want to concatenate when calling the server. Example:
 
 ```bash
-bert_serving_start -pooling_layer -4 -3 -2 -1 -model_dir /tmp/english_L-12_H-768_A-12/
+bert-serving-start -pooling_layer -4 -3 -2 -1 -model_dir /tmp/english_L-12_H-768_A-12/
 ```
 
 ##### **Q:** What are the available pooling strategies?
 
-**A:** Here is a table summarizes all pooling strategies I implemented. Choose your favorite one by specifying `bert_serving_start -pooling_strategy`.
+**A:** Here is a table summarizes all pooling strategies I implemented. Choose your favorite one by specifying `bert-serving-start -pooling_strategy`.
 
 |Strategy|Description|
 |---|---|
@@ -654,7 +794,7 @@ No, not at all. Just do `encode` and let the server handles the rest. If the bat
 
 ##### **Q:** How many requests can one service handle concurrently?
 
-**A:** The maximum number of concurrent requests is determined by `num_worker` in `bert_serving_start`. If you a sending more than `num_worker` requests concurrently, the new requests will be temporally stored in a queue until a free worker becomes available.
+**A:** The maximum number of concurrent requests is determined by `num_worker` in `bert-serving-start`. If you a sending more than `num_worker` requests concurrently, the new requests will be temporally stored in a queue until a free worker becomes available.
 
 ##### **Q:** So one request means one sentence?
 
@@ -668,7 +808,7 @@ No, not at all. Just do `encode` and let the server handles the rest. If the bat
 
 **A:** Yes. See [Benchmark](#zap-benchmark).
 
-To reproduce the results, please run [`python benchmark.py`](benchmark.py).
+To reproduce the results, please run `bert-serving-benchmark`.
 
 ##### **Q:** What is backend based on?
 
@@ -824,7 +964,7 @@ The primary goal of benchmarking is to test the scalability and the speed of thi
 
 To reproduce the results, please run
 ```bash
-python benchmark.py
+bert-serving-benchmark --help
 ```
 
 Common arguments across all experiments are:
@@ -946,3 +1086,32 @@ As one can observe, 1 clients 1 GPU = 381 seqs/s, 2 clients 2 GPU 402 seqs/s, 4 
 | [-11]           | 1523  | 2737  | 4752  |
 | [-12]           | 1568  | 2985  | 5303  |
 
+
+#### Speed wrt. `-fp16` and `-xla`
+
+`bert-as-service` supports two additional optimizations: half-precision and XLA, which can be turned on by adding `-fp16` and `-xla` to `bert-serving-start`, respectively. To enable these two options, you have to meet the following requirements:
+
+- your GPU supports FP16 instructions;
+- your Tensorflow is self-compiled with XLA and `-march=native`;
+- your CUDA and cudnn are not too old.
+
+On Tesla V100 with `tensorflow=1.13.0-rc0` it gives:
+
+<img src=".github/fp16-xla.svg" width="600">
+
+FP16 achieves ~1.4x speedup (round-trip) comparing to the FP32 counterpart. To reproduce the result, please run `python example/example1.py`.
+
+
+<h2 align="center">Citing</h2>
+<p align="right"><a href="#bert-as-service"><sup>▴ Back to top</sup></a></p>
+
+If you use bert-as-service in a scientific publication, we would appreciate references to the following BibTex entry:
+
+```latex
+@misc{xiao2018bertservice,
+  title={bert-as-service},
+  author={Xiao, Han},
+  howpublished={\url{https://github.com/hanxiao/bert-as-service}},
+  year={2018}
+}
+```
